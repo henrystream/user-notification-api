@@ -286,6 +286,7 @@ func Verify2FA(tokenString, totpCode string) (string, error) {
 	err = db.QueryRow(context.Background(), `
 	SELECT totp_secret FROM users WHERE id= $1
 	`, userID).Scan(&totpSecret)
+	log.Printf("totp from DB %v", totpSecret)
 	if err != nil {
 		log.Printf("DB query error for user %d: %v", userID, err)
 		return "", err
