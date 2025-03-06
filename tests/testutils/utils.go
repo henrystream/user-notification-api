@@ -88,7 +88,7 @@ func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}{
-		Email:    "test@example.com",
+		Email:    uniqueEmail,
 		Password: "password123",
 	}
 	body, err = json.Marshal(loginPayload)

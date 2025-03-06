@@ -83,6 +83,20 @@ func InitDBTest() {
 	if db == nil {
 		log.Fatal("Database pool is nil")
 	}
+	// Create table if it doesn't exist
+	_, err = db.Exec(context.Background(), `
+		CREATE TABLE IF NOT EXISTS users (
+			id SERIAL PRIMARY KEY,
+			email TEXT UNIQUE NOT NULL,
+			password TEXT,
+			role TEXT NOT NULL,
+			google_id TEXT UNIQUE,
+			totp_secret TEXT
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Failed to create table in test DB: %v", err)
+	}
 	_, err = db.Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
 	if err != nil {
 		log.Fatalf("Failed to truncate table: %v", err)

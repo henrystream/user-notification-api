@@ -1,35 +1,28 @@
 # User Notification API
 
-A high-performance, scalable API built with Fiber (Go) featuring user authentication, session management, WebSockets, background job processing, and rate limiting. Uses PostgreSQL for data storage and Redis for sessions and rate limiting.
+A high-performance API built with Fiber (Go) featuring user authentication, OAuth2 (Google), 2FA (TOTP), WebSockets, background jobs, and rate limiting. Uses PostgreSQL for data storage and Redis for sessions/rate limiting.
 
 ## Features
 
-- **User Authentication**: Register (`/register`), Login (`/login`), Logout (via token expiration), Profile (`/profile`).
-- **Role-Based Access Control**: Admin-only (`/admin`) and user-only (`/user-data`) routes.
-- **Rate Limiting**: 100 requests per minute per user/IP.
-- **WebSockets**: Real-time notifications (`/ws`) with welcome message and global chat.
-- **Background Jobs**: Email notifications and log processing (via Redis, extendable).
+- **User Authentication**: Register, login, logout (JWT-based).
+- **OAuth2**: Google login integration.
+- **Two-Factor Authentication (2FA)**: TOTP via authenticator apps.
+- **Rate Limiting**: 100 requests/minute per user/IP.
+- **WebSockets**: Real-time notifications and chat.
+- **Background Jobs**: Redis-based (extendable for email/logs).
 - **Monitoring**: Prometheus metrics at `/metrics`.
 
 ## Prerequisites
 
 - Go 1.23+
-- Docker and Docker Compose
+- Docker & Docker Compose
+- PostgreSQL, Redis
+- Google OAuth2 credentials
 
 ## Setup
 
-1. **Clone the Repository**
-
+1. **Clone the Repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/henrystream/user-notification-api.git
    cd user-notification-api
    ```
-
-1. **Update Locally**:
-   - Replace `C:/Users/henry/go/src/user-notification-api/README.md` with the above content.
-   - Commit and push:
-     ```bash
-     git add README.md
-     git commit -m "Update README with project details"
-     git push origin main
-     ```
