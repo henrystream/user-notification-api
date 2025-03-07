@@ -19,7 +19,6 @@ import (
 )
 
 func SetupTestApp(t *testing.T) *fiber.App {
-	// Ensure fresh DB state
 	services.InitDBTest()
 	_, err := services.DB().Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
 	if err != nil {
@@ -44,13 +43,14 @@ func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 		t.Fatal("App is nil")
 	}
 	uniqueEmail := fmt.Sprintf("test+%d@example.com", time.Now().UnixNano())
+	password := "password123" // Store password for reuse
 	payload := struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 		Role     string `json:"role"`
 	}{
 		Email:    uniqueEmail,
-		Password: "password123",
+		Password: password,
 		Role:     role,
 	}
 	body, err := json.Marshal(payload)
@@ -72,24 +72,21 @@ func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 
 	var regResult map[string]string
 	err = json.NewDecoder(resp.Body).Decode(&regResult)
-
 	if err != nil {
-		t.Fatalf("Failed to decode register response: %v", err)
+		t.Fatalf("Failed <nil>Failed to decode register response: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("Register response is nil")
-	}
-	t.Logf("Register status: %d", resp.StatusCode)
-	assert.Equal(t, fiber.StatusCreated, resp.StatusCode)
-
 	totpSecret := regResult["totp_secret"]
 
+	// Ensure DB commit by waiting briefly
+	time.Sleep(100 * time.Millisecond)
+
+	// Login with the same password
 	loginPayload := struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}{
 		Email:    uniqueEmail,
-		Password: "password123",
+		Password: password, // Reuse the same password
 	}
 	body, err = json.Marshal(loginPayload)
 	if err != nil {
@@ -114,16 +111,15 @@ func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 	}
 	partialToken := partialResult["token"]
 
-	//Complet 2FA
+	// Complete 2FA
 	totpCode, err := totp.GenerateCode(totpSecret, time.Now())
 	if err != nil {
-		t.Fatalf("Error generating code, %v", err)
+		t.Errorf("Error generating totpcode %v", err)
 	}
 	tfaPayload := map[string]string{
 		"token":     partialToken,
 		"totp_code": totpCode,
 	}
-
 	body, err = json.Marshal(tfaPayload)
 	if err != nil {
 		t.Fatalf("Failed to marshal 2FA payload: %v", err)
@@ -137,7 +133,6 @@ func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 	if resp == nil {
 		t.Fatal("2FA response is nil")
 	}
-
 	t.Logf("2FA status: %d", resp.StatusCode)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 

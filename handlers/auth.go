@@ -3,11 +3,12 @@ package handlers
 import (
 	"context"
 	"log"
-	"user-notification-api/models"
 	"user-notification-api/services"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt"
+	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 )
 
@@ -20,6 +21,52 @@ func Setuproutes(app *fiber.App) {
 }
 
 func Register(c *fiber.Ctx) error {
+	var input struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid input"})
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+	}
+
+	totpSecret, err := totp.Generate(totp.GenerateOpts{Issuer: "YourApp", AccountName: input.Email})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate TOTP"})
+	}
+
+	var userID int
+	err = services.DB().QueryRow(c.Context(), `
+		INSERT INTO users (email, password, role, totp_secret)
+		VALUES ($1, $2, $3, $4) RETURNING id`,
+		input.Email, hashedPassword, input.Role, totpSecret.Secret()).Scan(&userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to register user"})
+	}
+
+	/*msg := kafka.Message{
+		Key:   []byte(input.Email),
+		Value: []byte(fmt.Sprintf(`{"email":"%s","role":"%s"}`, input.Email, input.Role)),
+	}
+	err = services.KafkaWriter.WriteMessages(c.Context(), msg)
+	if err != nil {
+		log.Printf("Failed to send Kafka message: %v", err)
+	} else {
+		log.Printf("Sent Kafka message for %s", input.Email)
+	}*/
+
+	log.Printf("Registered user: Email=%s", input.Email)
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"totp_secret": totpSecret.Secret()})
+}
+
+// ... (rest of the file unchanged)
+
+/*func Register(c *fiber.Ctx) error {
 	var user models.User
 	if err := c.BodyParser(&user); err != nil {
 		log.Printf("Parse error: %v", err)
@@ -35,7 +82,8 @@ func Register(c *fiber.Ctx) error {
 		"message":     "User registered",
 		"totp_secret": secret,
 	})
-}
+
+}*/
 
 func Login(c *fiber.Ctx) error {
 	var creds struct {

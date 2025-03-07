@@ -5,6 +5,7 @@ import (
 	"user-notification-api/handlers"
 	"user-notification-api/middleware"
 	"user-notification-api/services"
+	"user-notification-api/workers"
 
 	"github.com/ansrivas/fiberprometheus/v2"
 	"github.com/gofiber/fiber/v2"
@@ -12,7 +13,10 @@ import (
 
 func main() {
 	services.InitDB()
-	go services.ProcessJobs()
+	//go services.ProcessJobs()
+
+	// Start email worker in a goroutine
+	go workers.StartEmailWorker()
 
 	app := fiber.New()
 	app.Use(middleware.Logging())

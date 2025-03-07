@@ -1,36 +1,31 @@
 package middleware
 
 import (
-	"log"
 	"strings"
 	"user-notification-api/services"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt"
 )
 
 func JWTAuth() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		auth := c.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			log.Println("No Bearer token provided")
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "No token"})
+		authHeader := c.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "No Bearer token provided"})
 		}
-		tokenStr := strings.TrimPrefix(auth, "Bearer ")
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 			return services.JWTSecret(), nil
 		})
 		if err != nil || !token.Valid {
-			log.Printf("JWT parse error: %v: %v", err)
-			return c.Status(fiber.StatusUnauthorized).JSON(
-				fiber.Map{"error": "Invalid token"})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token"})
 		}
 		claims := token.Claims.(jwt.MapClaims)
 		if !claims["2fa"].(bool) {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "2FA required"})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "2FA required"})
 		}
-		c.Locals("userID", int(claims["id"].(float64)))
+		c.Locals("user_id", int(claims["id"].(float64)))
 		c.Locals("role", claims["role"].(string))
 		return c.Next()
 	}

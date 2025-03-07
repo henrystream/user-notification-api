@@ -64,3 +64,7 @@ func TestiLoginWith2FA(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
+
+func TestVerify2FA(t *testing.T) {
+
+}

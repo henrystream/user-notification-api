@@ -9,8 +9,10 @@ import (
 	"time"
 	"user-notification-api/models"
 
+	"github.com/IBM/sarama"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
@@ -19,29 +21,65 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-var db *pgxpool.Pool
-var redisClient *redis.Client
-var jwtSecret = []byte("secret-key")
+const (
+	KafkaTopic = "user-registration"
+	Brokers    = "localhost:9092"
+)
 
-var GoogleOauthConfig = &oauth2.Config{
-	ClientID:     "468907561667-g2pvuq6llu3l6bbd4egqit1noqih9a3i.apps.googleusercontent.com",
-	ClientSecret: "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",
-	RedirectURL:  "http://localhost:3000/auth/google/callback",
-	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
-	Endpoint:     google.Endpoint,
-}
+var (
+	db                *pgxpool.Pool
+	redisClient       *redis.Client
+	jwtSecret         = []byte("secret-key")
+	GoogleOauthConfig = &oauth2.Config{
+		ClientID:     "468907561667-g2pvuq6llu3l6bbd4egqit1noqih9a3i.apps.googleusercontent.com",
+		ClientSecret: "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",
+		RedirectURL:  "http://localhost:3000/auth/google/callback",
+		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
+		Endpoint:     google.Endpoint,
+	}
+)
 
 func DB() *pgxpool.Pool {
 	return db
 }
 
-func InitDB() {
+// kafka producer
+func produceMessage(message string) {
+	config := sarama.NewConfig()
+	config.Producer.Return.Successes = true
+
+	producer, err := sarama.NewSyncProducer([]string{Brokers}, config)
+	if err != nil {
+		log.Fatalf("Failed to start Kafka producer: %v", err)
+	}
+	defer producer.Close()
+
+	msg := &sarama.ProducerMessage{
+		Topic: KafkaTopic,
+		Value: sarama.StringEncoder(message),
+	}
+
+	_, _, err = producer.SendMessage(msg)
+	if err != nil {
+		log.Fatalf("Failed to send message: %v", err)
+	}
+	log.Println("Message sent successfully to Kafka:", message)
+}
+
+func InitDB() { // Runtime initialization
 	var err error
 	connStr := "postgres://postgres:password123@localhost:5432/userdb?sslmode=disable"
+	if db != nil {
+		db.Close()
+	}
 	db, err = pgxpool.New(context.Background(), connStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
 	}
+	if db == nil {
+		log.Fatal("Database pool is nil")
+	}
+
 	_, err = db.Exec(context.Background(), `
 		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
@@ -53,21 +91,61 @@ func InitDB() {
 		)
 	`)
 	if err != nil {
-		log.Fatalf("Failed to create table: %v", err)
-	}
-	// Add columns if missing (for existing tables)
-	_, err = db.Exec(context.Background(), `
-        ALTER TABLE users 
-		ALTER COLUMN password DROP NOT NULL,
-		ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE,
-        ADD COLUMN IF NOT EXISTS totp_secret TEXT
-    `)
-	if err != nil {
-		log.Printf("Failed to alter table (might already be updated): %v", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
+			// Ignore "relation already exists"
+		} else {
+			log.Fatalf("Failed to create table: %v", err)
+		}
 	}
 
-	redisClient = redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	log.Println("PostgreSQL and Redis connected")
+	if redisClient != nil {
+		redisClient.Close()
+	}
+	redisClient = redis.NewClient(&redis.Options{Addr: "redis:6379"})
+
+	/*kafkaBroker := os.Getenv("KAFKA_BROKER")
+	if kafkaBroker == "" {
+		kafkaBroker = "kafka:9092"
+	}
+	KafkaWriter = &kafka.Writer{
+		Addr:     kafka.TCP(kafkaBroker),
+		Topic:    "user-registration",
+		Balancer: &kafka.LeastBytes{},
+	}
+
+	conn, err := kafka.Dial("leader", kafkaBroker)
+	if err != nil {
+		log.Printf("Failed to connect to Kafka for topic creation: %v", err)
+	} else {
+		defer conn.Close()
+		err = conn.CreateTopics(kafka.TopicConfig{
+			Topic:             "user-registration",
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+		})
+		if err != nil {
+			log.Printf("Failed to create Kafka topic 'user-registration': %v", err)
+		} else {
+			log.Println("Successfully created Kafka topic 'user-registration'")
+		}
+	}
+
+	for i := 0; i < 10; i++ {
+		err = KafkaWriter.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("test"),
+			Value: []byte("test"),
+		})
+		if err == nil {
+			break
+		}
+		log.Printf("Waiting for Kafka: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Printf("Kafka not ready, proceeding without it: %v", err)
+	}
+	log.Println("PostgreSQL database and Kafka initialized")*/
 }
 
 func InitDBTest() {
@@ -83,7 +161,7 @@ func InitDBTest() {
 	if db == nil {
 		log.Fatal("Database pool is nil")
 	}
-	// Create table if it doesn't exist
+
 	_, err = db.Exec(context.Background(), `
 		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
@@ -95,17 +173,64 @@ func InitDBTest() {
 		)
 	`)
 	if err != nil {
-		log.Fatalf("Failed to create table in test DB: %v", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
+			// Ignore "relation already exists" error
+		} else {
+			log.Fatalf("Failed to create table: %v", err)
+		}
 	}
+
 	_, err = db.Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
 	if err != nil {
 		log.Fatalf("Failed to truncate table: %v", err)
 	}
+
 	if redisClient != nil {
 		redisClient.Close()
 	}
 	redisClient = redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	log.Println("PostgreSQL test database initialized")
+
+	// Initialize Kafka only if available
+	/*kafkaBroker := "localhost:9092"
+	writer := &kafka.Writer{
+		Addr:     kafka.TCP(kafkaBroker),
+		Topic:    "user-registration",
+		Balancer: &kafka.LeastBytes{},
+	}
+
+	conn, err := kafka.Dial("leader", kafkaBroker)
+	if err != nil {
+		log.Printf("Failed to connect to Kafka for topic creation: %v", err)
+	} else {
+		defer conn.Close()
+		err = conn.CreateTopics(kafka.TopicConfig{
+			Topic:             "user-registration",
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+		})
+		if err != nil {
+			log.Printf("Failed to create Kafka topic 'user-registration': %v", err)
+		} else {
+			log.Println("Successfully created Kafka topic 'user-registration'")
+		}
+	}
+
+	for i := 0; i < 10; i++ {
+		err = writer.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("test"),
+			Value: []byte("test"),
+		})
+		if err == nil {
+			break
+		}
+		log.Printf("Waiting for Kafka: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Printf("Kafka not ready, proceeding without it: %v", err)
+	}
+	log.Println("PostgreSQL test database and Kafka initialized")*/
 }
 
 func JWTSecret() []byte {
@@ -118,7 +243,6 @@ func Register(user models.User) (string, error) {
 		log.Printf("Hash error: %v", err)
 		return "", err
 	}
-
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "UserNotificationAPI",
 		AccountName: user.Email,
@@ -127,15 +251,29 @@ func Register(user models.User) (string, error) {
 		log.Printf("TOTP generation error: %v", err)
 		return "", err
 	}
-	//_, err = db.Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
-
 	_, err = db.Exec(context.Background(), `
-		INSERT INTO users (email, password, role,totp_secret) VALUES ($1, $2, $3, $4)
+		INSERT INTO users (email, password, role, totp_secret) VALUES ($1, $2, $3, $4)
 	`, user.Email, hashed, user.Role, key.Secret())
 	if err != nil {
 		log.Printf("DB insert error: %v", err)
 		return "", fmt.Errorf("DB insert error: %v", err)
 	}
+
+	// Send Kafka message if kafkaWriter is initialized
+	/*if KafkaWriter != nil {
+		msg := kafka.Message{
+			Key:   []byte(user.Email),
+			Value: []byte(fmt.Sprintf(`{"email":"%s","role":"%s"}`, user.Email, user.Role)),
+		}
+		err = KafkaWriter.WriteMessages(context.Background(), msg)
+		if err != nil {
+			log.Printf("Failed to send Kafka message: %v", err)
+			-- Continue despite Kafka failure
+		}
+	} else {
+		log.Println("Kafka writer not initialized, skipping message send")
+	}*/
+
 	log.Printf("Registered user: Email=%s", user.Email)
 	return key.Secret(), nil
 }
@@ -284,8 +422,8 @@ func Verify2FA(tokenString, totpCode string) (string, error) {
 
 	var totpSecret string
 	err = db.QueryRow(context.Background(), `
-	SELECT totp_secret FROM users WHERE id= $1
-	`, userID).Scan(&totpSecret)
+			SELECT totp_secret FROM users WHERE id= $1
+			`, userID).Scan(&totpSecret)
 	log.Printf("totp from DB %v", totpSecret)
 	if err != nil {
 		log.Printf("DB query error for user %d: %v", userID, err)
