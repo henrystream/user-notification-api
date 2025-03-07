@@ -6,24 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 	"user-notification-api/models"
 
-	"github.com/IBM/sarama"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-)
-
-const (
-	KafkaTopic = "user-registration"
-	Brokers    = "localhost:9092"
 )
 
 var (
@@ -41,29 +37,6 @@ var (
 
 func DB() *pgxpool.Pool {
 	return db
-}
-
-// kafka producer
-func produceMessage(message string) {
-	config := sarama.NewConfig()
-	config.Producer.Return.Successes = true
-
-	producer, err := sarama.NewSyncProducer([]string{Brokers}, config)
-	if err != nil {
-		log.Fatalf("Failed to start Kafka producer: %v", err)
-	}
-	defer producer.Close()
-
-	msg := &sarama.ProducerMessage{
-		Topic: KafkaTopic,
-		Value: sarama.StringEncoder(message),
-	}
-
-	_, _, err = producer.SendMessage(msg)
-	if err != nil {
-		log.Fatalf("Failed to send message: %v", err)
-	}
-	log.Println("Message sent successfully to Kafka:", message)
 }
 
 func InitDB() { // Runtime initialization
@@ -104,48 +77,47 @@ func InitDB() { // Runtime initialization
 	}
 	redisClient = redis.NewClient(&redis.Options{Addr: "redis:6379"})
 
-	/*kafkaBroker := os.Getenv("KAFKA_BROKER")
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
 	if kafkaBroker == "" {
-		kafkaBroker = "kafka:9092"
+		kafkaBroker = "localhost:9092" // Default for Docker
 	}
-	KafkaWriter = &kafka.Writer{
+	kafkaWriter = &kafka.Writer{
 		Addr:     kafka.TCP(kafkaBroker),
 		Topic:    "user-registration",
 		Balancer: &kafka.LeastBytes{},
 	}
-
 	conn, err := kafka.Dial("leader", kafkaBroker)
 	if err != nil {
-		log.Printf("Failed to connect to Kafka for topic creation: %v", err)
+		log.Printf("Failed to connect to Kafka: %v, using mock", err)
+		kafkaWriter = &mockKafkaWriter{}
 	} else {
 		defer conn.Close()
-		err = conn.CreateTopics(kafka.TopicConfig{
-			Topic:             "user-registration",
-			NumPartitions:     1,
-			ReplicationFactor: 1,
-		})
-		if err != nil {
-			log.Printf("Failed to create Kafka topic 'user-registration': %v", err)
-		} else {
-			log.Println("Successfully created Kafka topic 'user-registration'")
-		}
+		log.Println("Connected to Kafka successfully")
 	}
 
-	for i := 0; i < 10; i++ {
-		err = KafkaWriter.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte("test"),
-			Value: []byte("test"),
-		})
-		if err == nil {
-			break
-		}
-		log.Printf("Waiting for Kafka: %v", err)
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		log.Printf("Kafka not ready, proceeding without it: %v", err)
-	}
-	log.Println("PostgreSQL database and Kafka initialized")*/
+}
+
+// Declare kafkaWriter at package level
+var kafkaWriter KafkaWriterInterface
+
+// KafkaWriterInterface defines the methods we need
+type KafkaWriterInterface interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
+// mockKafkaWriter for fallback
+type mockKafkaWriter struct{}
+
+func (m *mockKafkaWriter) WriteMessages(ctx context.Context, msgs ...kafka.Message) error {
+	log.Println("Mock Kafka: Skipping message write")
+	return nil
+}
+func (m *mockKafkaWriter) Close() error { return nil }
+
+// KafkaWriter returns the writer instance
+func KafkaWriter() KafkaWriterInterface {
+	return kafkaWriter
 }
 
 func InitDBTest() {
@@ -190,47 +162,6 @@ func InitDBTest() {
 		redisClient.Close()
 	}
 	redisClient = redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-
-	// Initialize Kafka only if available
-	/*kafkaBroker := "localhost:9092"
-	writer := &kafka.Writer{
-		Addr:     kafka.TCP(kafkaBroker),
-		Topic:    "user-registration",
-		Balancer: &kafka.LeastBytes{},
-	}
-
-	conn, err := kafka.Dial("leader", kafkaBroker)
-	if err != nil {
-		log.Printf("Failed to connect to Kafka for topic creation: %v", err)
-	} else {
-		defer conn.Close()
-		err = conn.CreateTopics(kafka.TopicConfig{
-			Topic:             "user-registration",
-			NumPartitions:     1,
-			ReplicationFactor: 1,
-		})
-		if err != nil {
-			log.Printf("Failed to create Kafka topic 'user-registration': %v", err)
-		} else {
-			log.Println("Successfully created Kafka topic 'user-registration'")
-		}
-	}
-
-	for i := 0; i < 10; i++ {
-		err = writer.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte("test"),
-			Value: []byte("test"),
-		})
-		if err == nil {
-			break
-		}
-		log.Printf("Waiting for Kafka: %v", err)
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		log.Printf("Kafka not ready, proceeding without it: %v", err)
-	}
-	log.Println("PostgreSQL test database and Kafka initialized")*/
 }
 
 func JWTSecret() []byte {
@@ -259,22 +190,8 @@ func Register(user models.User) (string, error) {
 		return "", fmt.Errorf("DB insert error: %v", err)
 	}
 
-	// Send Kafka message if kafkaWriter is initialized
-	/*if KafkaWriter != nil {
-		msg := kafka.Message{
-			Key:   []byte(user.Email),
-			Value: []byte(fmt.Sprintf(`{"email":"%s","role":"%s"}`, user.Email, user.Role)),
-		}
-		err = KafkaWriter.WriteMessages(context.Background(), msg)
-		if err != nil {
-			log.Printf("Failed to send Kafka message: %v", err)
-			-- Continue despite Kafka failure
-		}
-	} else {
-		log.Println("Kafka writer not initialized, skipping message send")
-	}*/
-
-	log.Printf("Registered user: Email=%s", user.Email)
+	msg := fmt.Sprintf("New User Registered: Email=%s", user.Email)
+	log.Println(msg)
 	return key.Secret(), nil
 }
 

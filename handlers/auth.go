@@ -49,41 +49,9 @@ func Register(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to register user"})
 	}
 
-	/*msg := kafka.Message{
-		Key:   []byte(input.Email),
-		Value: []byte(fmt.Sprintf(`{"email":"%s","role":"%s"}`, input.Email, input.Role)),
-	}
-	err = services.KafkaWriter.WriteMessages(c.Context(), msg)
-	if err != nil {
-		log.Printf("Failed to send Kafka message: %v", err)
-	} else {
-		log.Printf("Sent Kafka message for %s", input.Email)
-	}*/
-
 	log.Printf("Registered user: Email=%s", input.Email)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"totp_secret": totpSecret.Secret()})
 }
-
-// ... (rest of the file unchanged)
-
-/*func Register(c *fiber.Ctx) error {
-	var user models.User
-	if err := c.BodyParser(&user); err != nil {
-		log.Printf("Parse error: %v", err)
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid input"})
-	}
-	secret, err := services.Register(user)
-	if err != nil {
-		log.Println("Register error: %v", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Registration failed"})
-	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message":     "User registered",
-		"totp_secret": secret,
-	})
-
-}*/
 
 func Login(c *fiber.Ctx) error {
 	var creds struct {

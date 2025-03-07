@@ -13,6 +13,7 @@ import (
 
 func main() {
 	services.InitDB()
+	go services.StartEmailConsumer()
 	//go services.ProcessJobs()
 
 	// Start email worker in a goroutine
