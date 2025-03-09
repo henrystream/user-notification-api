@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	db                *pgxpool.Pool
+	db                DBInterface
 	redisClient       *redis.Client
 	jwtSecret         = []byte("secret-key")
 	GoogleOauthConfig = &oauth2.Config{
@@ -35,66 +35,109 @@ var (
 	}
 )
 
-func DB() *pgxpool.Pool {
-	return db
+// DBInterface defines the methods used by handlers
+type DBInterface interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	Close()
 }
 
-func InitDB() { // Runtime initialization
+// DBFunc allows overriding DB in tests
+//var DBFunc = InitDB
+
+func InitDB() func() DBInterface { // Runtime initialization
 	var err error
-	connStr := "postgres://postgres:password123@localhost:5432/userdb?sslmode=disable"
 	if db != nil {
-		db.Close()
-	}
-	db, err = pgxpool.New(context.Background(), connStr)
-	if err != nil {
-		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
-	}
-	if db == nil {
-		log.Fatal("Database pool is nil")
+		log.Println("DB already initialized")
+		return func() DBInterface { return db }
 	}
 
-	_, err = db.Exec(context.Background(), `
-		CREATE TABLE IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
+	host := os.Getenv("POSTGRES_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	user := os.Getenv("POSTGRES_USER")
+	if user == "" {
+		user = "postgres"
+	}
+	password := os.Getenv("POSTGRES_PASSWORD")
+	if password == "" {
+		password = "password123"
+	}
+	dbname := os.Getenv("POSTGRES_DB")
+	if dbname == "" {
+		dbname = "userdb"
+	}
+
+	connString := "postgres://" + user + ":" + password + "@" + host + ":5432/" + dbname
+	pool, err := pgxpool.New(context.Background(), connString)
+	if err != nil {
+		log.Printf("Failed to connect to database at %s: %v", connString, err)
+		return func() DBInterface {
+			log.Println("DB not initialized due to connection error")
+			return nil
+		}
+	}
+
+	//if pool != nil {
+	cmdTag, err := pool.Exec(context.Background(), `
+            CREATE TABLE IF NOT EXISTS users (
+              id SERIAL PRIMARY KEY,
 			email TEXT UNIQUE NOT NULL,
 			password TEXT,
 			role TEXT NOT NULL,
 			google_id TEXT UNIQUE,
 			totp_secret TEXT
-		)
-	`)
+            )`)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
-			// Ignore "relation already exists"
-		} else {
-			log.Fatalf("Failed to create table: %v", err)
+		log.Printf("Failed to create users table: %v", err)
+		pool.Close()
+		return func() DBInterface {
+			log.Println("DB not initialized due to table creation error")
+			return nil
 		}
 	}
 
+	log.Printf("Initialized DB at %s, rows affected: %d", connString, cmdTag.RowsAffected())
+	db = pool
+	return func() DBInterface { return db }
+
+}
+
+func DB() DBInterface {
+	d := InitDB()()
+	if d == nil {
+		log.Println("DB() called but returned nil")
+	}
+	return d
+}
+
+func InitRedis() *redis.Client {
 	if redisClient != nil {
-		redisClient.Close()
+		return redisClient
 	}
-	redisClient = redis.NewClient(&redis.Options{Addr: "redis:6379"})
 
-	kafkaBroker := os.Getenv("KAFKA_BROKER")
-	if kafkaBroker == "" {
-		kafkaBroker = "localhost:9092" // Default for Docker
+	addr := os.Getenv("REDIS_HOST")
+	if addr == "" {
+		addr = "localhost:6379"
+		log.Println("REDIS_HOST not set, defaulting to localhost:6379")
 	}
-	kafkaWriter = &kafka.Writer{
-		Addr:     kafka.TCP(kafkaBroker),
-		Topic:    "user-registration",
-		Balancer: &kafka.LeastBytes{},
-	}
-	conn, err := kafka.Dial("leader", kafkaBroker)
+
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: "", // No password by default
+		DB:       0,  // Default DB
+	})
+
+	ctx := context.Background()
+	_, err := redisClient.Ping(ctx).Result()
 	if err != nil {
-		log.Printf("Failed to connect to Kafka: %v, using mock", err)
-		kafkaWriter = &mockKafkaWriter{}
-	} else {
-		defer conn.Close()
-		log.Println("Connected to Kafka successfully")
+		log.Printf("Failed to connect to Redis at %s: %v", addr, err)
+		redisClient = nil
+		return nil
 	}
-
+	log.Println("Connected to Redis successfully")
+	return redisClient
 }
 
 // Declare kafkaWriter at package level
@@ -115,17 +158,10 @@ func (m *mockKafkaWriter) WriteMessages(ctx context.Context, msgs ...kafka.Messa
 }
 func (m *mockKafkaWriter) Close() error { return nil }
 
-// KafkaWriter returns the writer instance
-func KafkaWriter() KafkaWriterInterface {
-	return kafkaWriter
-}
-
 func InitDBTest() {
 	var err error
-	connStr := "postgres://postgres:password123@localhost:5432/userdb?sslmode=disable"
-	if db != nil {
-		db.Close()
-	}
+	connStr := "postgres://postgres:password123@postgres:5432/userdb?sslmode=disable"
+
 	db, err = pgxpool.New(context.Background(), connStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to PostgreSQL: %v", err)
@@ -161,7 +197,7 @@ func InitDBTest() {
 	if redisClient != nil {
 		redisClient.Close()
 	}
-	redisClient = redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	redisClient = redis.NewClient(&redis.Options{Addr: "redis:6379"})
 }
 
 func JWTSecret() []byte {
@@ -201,16 +237,21 @@ func Login(email, password string) (string, error) {
 	log.Printf("Querying user: %s", email)
 
 	err := db.QueryRow(context.Background(), `
-		SELECT id, email, password, role,totp_secret 
-		FROM users WHERE email = $1
-	`, email).Scan(&user.ID, &user.Email, &user.Password, &user.Role, &totpSecret)
+        SELECT id, email, password, role, totp_secret 
+        FROM users WHERE email = $1
+    `, email).Scan(&user.ID, &user.Email, &user.Password, &user.Role, &totpSecret)
+
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			log.Printf("Login: No user found for %s", email)
+			return "", errors.New("invalid credentials")
+		}
 		log.Printf("DB query error for %s: %v", email, err)
 		return "", err
 	}
 	log.Printf("Found user: ID=%d, Email=%s, HasPassword=%v", user.ID, user.Email, user.Password != "")
 	if user.Password != "" {
-		err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 		if err != nil {
 			log.Printf("Password mismatch for %s: %v", email, err)
 			return "", err
@@ -336,7 +377,7 @@ func Verify2FA(tokenString, totpCode string) (string, error) {
 		return tokenString, nil
 	}
 	userID := int(claims["id"].(float64))
-
+	//log.Println(userID)
 	var totpSecret string
 	err = db.QueryRow(context.Background(), `
 			SELECT totp_secret FROM users WHERE id= $1
@@ -346,6 +387,7 @@ func Verify2FA(tokenString, totpCode string) (string, error) {
 		log.Printf("DB query error for user %d: %v", userID, err)
 		return "", err
 	}
+	log.Println("TOTPCODE:", totpCode)
 	valid := totp.Validate(totpCode, totpSecret)
 	if !valid {
 		log.Printf("Invalid TOTP code for user %d", userID)

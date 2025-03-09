@@ -10,15 +10,89 @@ import (
 	"testing"
 	"time"
 	"user-notification-api/handlers"
-	"user-notification-api/middleware"
 	"user-notification-api/services"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	//"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 )
 
-func SetupTestApp(t *testing.T) *fiber.App {
+type DBInterface interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	Close()
+}
+
+// MockDB mocks the pgxpool.Pool methods used in handlers
+type MockDB struct {
+	ExecFunc     func(ctx context.Context, sql string, args ...interface{}) (int64, error)
+	QueryRowFunc func(ctx context.Context, sql string, args ...interface{}) pgx.Row
+}
+
+func (m *MockDB) Exec(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+	if m.ExecFunc != nil {
+		return m.ExecFunc(ctx, sql, args...)
+	}
+	return 1, nil // Default: simulate success
+}
+
+func (m *MockDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	if m.QueryRowFunc != nil {
+		return m.QueryRowFunc(ctx, sql, args...)
+	}
+	return &MockRow{} // Default: empty row
+}
+
+func (m *MockDB) Close() {}
+
+// MockRow mocks a pgx.Row for QueryRow
+type MockRow struct {
+	email, password, role, totp string
+}
+
+func (r *MockRow) Scan(dest ...interface{}) error {
+	if len(dest) == 4 {
+		dest[0] = r.email
+		dest[1] = r.password
+		dest[2] = r.role
+		dest[3] = r.totp
+	}
+	return nil
+}
+
+func SetupTestApp() *fiber.App {
+	app := fiber.New()
+
+	// Mock DB
+	mockDB := &MockDB{
+		ExecFunc: func(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+			return 1, nil // Simulate success
+		},
+		QueryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+			return &MockRow{}
+		},
+	}
+	services.DBFunc = func() func() services.DBInterface {
+		return func() services.DBInterface {
+			return mockDB
+		}
+	}
+
+	// Register routes
+	app.Post("/register", handlers.Register)
+	app.Post("/login", handlers.Login)
+	app.Post("/verify-2fa", handlers.Verify2FA)
+	app.Get("/admin", handlers.AdminRoute)
+	app.Get("/ws/chat", handlers.WebSocketChat)
+
+	return app
+}
+
+/*func SetupTestApp(t *testing.T) *fiber.App {
 	services.InitDBTest()
 	_, err := services.DB().Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
 	if err != nil {
@@ -36,7 +110,7 @@ func SetupTestApp(t *testing.T) *fiber.App {
 	handlers.SetupUserRoutes(protected)
 	handlers.SetupWebSocketRoutes(protected)
 	return app
-}
+}*/
 
 func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 	if app == nil {

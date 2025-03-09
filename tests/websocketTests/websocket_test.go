@@ -13,7 +13,7 @@ import (
 )
 
 func TestWebSocketChat(t *testing.T) {
-	app := testutils.SetupTestApp(t)
+	app := testutils.SetupTestApp()
 
 	// Start the server in a goroutine
 	go func() {

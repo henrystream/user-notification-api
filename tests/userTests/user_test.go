@@ -11,7 +11,7 @@ import (
 )
 
 func TestAdminRoute(t *testing.T) {
-	app := testutils.SetupTestApp(t)
+	app := testutils.SetupTestApp()
 	token := testutils.GetValidToken(t, app, "admin")
 	t.Logf("Admin token: %s", token) // Debug
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
