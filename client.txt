@@ -1,5 +1,0 @@
-
-Google Client
-ID: 468907561667-g2pvuq6llu3l6bbd4egqit1noqih9a3i.apps.googleusercontent.com
-
-Secret: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
