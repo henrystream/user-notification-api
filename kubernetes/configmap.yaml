@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  KAFKA_BROKER: "kafka-service:9092"
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "password123"
+  POSTGRES_DB: "userdb"
+  REDIS_HOST: "redis-service:6379"

@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "user-notification-api"
+    static_configs:
+      - targets: ["user-notification-api:3000"] # Docker/Kubernetes service name

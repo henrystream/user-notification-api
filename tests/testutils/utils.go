@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 	"user-notification-api/handlers"
-	"user-notification-api/services"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -66,23 +65,6 @@ func (r *MockRow) Scan(dest ...interface{}) error {
 
 func SetupTestApp() *fiber.App {
 	app := fiber.New()
-
-	// Mock DB
-	mockDB := &MockDB{
-		ExecFunc: func(ctx context.Context, sql string, args ...interface{}) (int64, error) {
-			return 1, nil // Simulate success
-		},
-		QueryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
-			return &MockRow{}
-		},
-	}
-	services.DBFunc = func() func() services.DBInterface {
-		return func() services.DBInterface {
-			return mockDB
-		}
-	}
-
-	// Register routes
 	app.Post("/register", handlers.Register)
 	app.Post("/login", handlers.Login)
 	app.Post("/verify-2fa", handlers.Verify2FA)
@@ -91,26 +73,6 @@ func SetupTestApp() *fiber.App {
 
 	return app
 }
-
-/*func SetupTestApp(t *testing.T) *fiber.App {
-	services.InitDBTest()
-	_, err := services.DB().Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
-	if err != nil {
-		t.Fatalf("Failed to truncate users table: %v", err)
-	}
-
-	app := fiber.New()
-	if app == nil {
-		t.Fatal("Failed to create Fiber app")
-	}
-	app.Use(middleware.RateLimit(100, time.Minute))
-	handlers.Setuproutes(app)
-
-	protected := app.Group("", middleware.JWTAuth())
-	handlers.SetupUserRoutes(protected)
-	handlers.SetupWebSocketRoutes(protected)
-	return app
-}*/
 
 func GetValidToken(t *testing.T, app *fiber.App, role string) string {
 	if app == nil {

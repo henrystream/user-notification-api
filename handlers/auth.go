@@ -12,12 +12,29 @@ import (
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/segmentio/kafka-go"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 )
 
 var jwtSecret = []byte("your-secret-key") // Replace with env var in production
+
+// Custom metrics
+var (
+	loginCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "login_attempts_total",
+			Help: "Total number of login attempts",
+		},
+		[]string{"status"}, // Success or failure
+	)
+)
+
+func init() {
+	prometheus.MustRegister(loginCounter)
+}
 
 type User struct {
 	Email      string
@@ -29,6 +46,7 @@ type User struct {
 func Setuproutes(app *fiber.App) {
 	app.Post("/register", Register)
 	app.Post("/login", Login)
+	app.Get("/admin", AdminRoute)
 	app.Post("/2fa", Verify2FA)
 	app.Get("/auth/google", GoogleAuthRedirect)
 	app.Get("/auth/google/callback", GoogleAuthCallback)

@@ -18,31 +18,7 @@ func StartEmailWorker() {
 	defer reader.Close()
 
 	log.Println("Email worker started")
-	/*for {
-	msg, err := reader.ReadMessage(context.Background())
-			if err != nil {
-				log.Printf("Failed to read Kafka message: %v", err)
-				continue
-			}*/
 
-	/*var user struct {
-		Email string `json:"email"`
-		Role  string `json:"role"`
-	}
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		log.Printf("Failed to unmarshal Kafka message: %v", err)
-		continue
-	}*/
-
-	// Send email (using Gmail SMTP as an example)
-	/*err = sendEmail(user.Email, "Welcome to User Notification API",
-		"Hi,\n\nYou’ve registered with role: "+user.Role+".\n\nThanks,\nTeam")
-	if err != nil {
-		log.Printf("Failed to send email to %s: %v", user.Email, err)
-	} else {
-		log.Printf("Sent email to %s", user.Email)
-	}*/
-	//}
 }
 
 func sendEmail(to, subject, body string) error {

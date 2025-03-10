@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-notification-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-notification-api
+  template:
+    metadata:
+      labels:
+        app: user-notification-api
+    spec:
+      containers:
+        - name: user-notification-api
+          image: yourusername/user-notification-api:latest
+          ports:
+            - containerPort: 3000
+            - containerPort: 50051
+          envFrom:
+            - configMapRef:
+                name: app-config
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+spec:
+  selector:
+    app: user-notification-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+  type: ClusterIP

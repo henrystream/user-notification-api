@@ -6,12 +6,24 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
 	clients   = make(map[*websocket.Conn]int) // Map of WebSocket connections to user IDs
 	clientsMu sync.Mutex                      // Mutex for thread-safe client management
+
+	wsConnections = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "websocket_connections_active",
+			Help: "Number of active WebSocket connections",
+		},
+	)
 )
+
+func init() {
+	prometheus.MustRegister(wsConnections)
+}
 
 func WebSocketHandler(c *fiber.Ctx) error {
 	if websocket.IsWebSocketUpgrade(c) {
@@ -28,6 +40,7 @@ func SetupWebSocketRoutes(app fiber.Router) {
 		// Register client
 		clientsMu.Lock()
 		clients[c] = userID
+		wsConnections.Inc() // Increment active connections
 		clientsMu.Unlock()
 		log.Printf("User %d connected to WebSocket", userID)
 
@@ -42,6 +55,7 @@ func SetupWebSocketRoutes(app fiber.Router) {
 		defer func() {
 			clientsMu.Lock()
 			delete(clients, c)
+			wsConnections.Dec() // Decrement active connections
 			clientsMu.Unlock()
 			c.Close()
 			log.Printf("User %d disconnected from WebSocket", userID)
